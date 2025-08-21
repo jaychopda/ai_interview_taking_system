@@ -52,6 +52,8 @@ def start_interview(request):
         data = request.data
         position = data.get('position')
         difficulty = data.get('difficulty')
+        skills = data.get('skills', [])
+        total_questions = int(data.get('total_questions') or 5)
         resume_data = data.get('resume_data')
 
         # Generate unique session ID
@@ -62,14 +64,16 @@ def start_interview(request):
             session_id=session_id,
             position=position,
             difficulty=difficulty,
-            resume_analysis=resume_data or {}
+            skills=skills,
+            resume_analysis=resume_data or {},
+            total_questions=total_questions
         )
 
         # Initialize AI interviewer
         interviewer = AIInterviewer()
         
         # Generate first question
-        first_question = interviewer.generate_first_question(position, difficulty, resume_data or {})
+        first_question = interviewer.generate_first_question(position, difficulty, skills, resume_data or {})
 
         # Save first question
         Question.objects.create(
@@ -83,7 +87,8 @@ def start_interview(request):
             'success': True,
             'session_id': session_id,
             'question': first_question['text'],
-            'question_type': first_question['type']
+            'question_type': first_question['type'],
+            'total_questions': total_questions
         })
 
     except Exception as e:
@@ -110,7 +115,7 @@ def submit_answer(request):
         interviewer = AIInterviewer()
 
         # Evaluate answer with Gemini
-        evaluation = interviewer.evaluate_answer(current_question.question_text, answer, session.position)
+        evaluation = interviewer.evaluate_answer(current_question.question_text, answer, session.position, session.skills)
 
         # Save answer and feedback
         Answer.objects.create(
@@ -121,7 +126,7 @@ def submit_answer(request):
         )
 
         # Check if interview is complete
-        total_questions = 5
+        total_questions = int(getattr(session, 'total_questions', 5) or 5)
         is_complete = question_number >= total_questions
 
         response_data = {
@@ -147,6 +152,7 @@ def submit_answer(request):
             )
             
             response_data['next_question'] = next_question['text']
+            response_data['total_questions'] = total_questions
         else:
             # Calculate final score
             final_score = interviewer.calculate_final_score(session)
@@ -155,6 +161,12 @@ def submit_answer(request):
             session.save()
             
             response_data['final_score'] = final_score
+            response_data['total_questions'] = total_questions
+
+            # Generate improvement suggestions
+            improvement = interviewer.generate_improvement_suggestions(session)
+            response_data['suggestions'] = improvement.get('suggestions', [])
+            response_data['overall_advice'] = improvement.get('overall_advice', '')
 
         return Response(response_data)
 

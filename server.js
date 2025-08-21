@@ -46,8 +46,13 @@ const interviewSchema = new mongoose.Schema(
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     position: { type: String, required: true },
     difficulty: { type: String, required: true },
-    resumeAnalysis: { type: String, required: true },
-
+    resumeAnalysis: { type: mongoose.Schema.Types.Mixed, required: true },
+    pythonSessionId: { type: String, required: true },
+    isComplete: { type: Boolean, default: false },
+    finalScore: { type: Number, default: 0 },
+    totalQuestions: { type: Number, default: 5 },
+    currentQuestion: { type: Number, default: 1 },
+    skills: { type: [String], default: [] },
     createdAt: { type: Date, default: Date.now }
   },
   { collection: 'interviews' }
@@ -57,7 +62,7 @@ const Interview = mongoose.model('Interview', interviewSchema);
 const resumeAnalysisSchema = new mongoose.Schema(
   {
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-    resumeAnalysis: { type: String, required: true },
+    resumeAnalysis: { type: mongoose.Schema.Types.Mixed, required: true },
     createdAt: { type: Date, default: Date.now }
   },
 );
@@ -211,11 +216,29 @@ app.get('/api/user/interviews', async (req, res) => {
   }
 });
 
+// Fetch latest resume analysis for logged-in user
+app.get('/api/user/resume-analysis', async (req, res) => {
+  try {
+    if (!req.session.userId) {
+      return res.status(401).json({ success: false, error: 'Not authenticated' });
+    }
+    const doc = await ResumeAnalysis.findOne({ userId: req.session.userId }).sort({ createdAt: -1 });
+    if (!doc) return res.json({ success: true, analysis: null });
+    return res.json({ success: true, analysis: doc.resumeAnalysis });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: 'Failed to fetch analysis' });
+  }
+});
+
 // Route 1: Upload and analyze resume
 app.post('/api/upload-resume', upload.single('resume'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
+    }
+    // Require auth to associate analysis
+    if (!req.session.userId) {
+      return res.status(401).json({ error: 'User not authenticated' });
     }
 
     // Call Python service to analyze resume
@@ -230,15 +253,17 @@ app.post('/api/upload-resume', upload.single('resume'), async (req, res) => {
 
 
     // Save resume analysis to database
+    // Delete previous analyses for this user to keep only the latest
+    await ResumeAnalysis.deleteMany({ userId: req.session.userId });
     const resumeAnalysis = await ResumeAnalysis.create({
       userId: req.session.userId,
-      resumeAnalysis: JSON.stringify(response.data.analysis)
+      resumeAnalysis: response.data.analysis
     });
 
     res.json({
       success: true,
       filename: req.file.filename,
-      analysis: response.data,
+      analysis: response.data.analysis,
       message: 'Resume uploaded and analyzed successfully'
     });
 
@@ -251,26 +276,53 @@ app.post('/api/upload-resume', upload.single('resume'), async (req, res) => {
 // Route 2: Start interview session
 app.post('/api/start-interview', async (req, res) => {
   try {
-    const { position, difficulty, resumeAnalysis } = req.body;
+    if (!req.session.userId) {
+      return res.status(401).json({ error: 'User not authenticated' });
+    }
+
+    const { position, difficulty, skills, totalQuestions, resumeAnalysis } = req.body;
 
     // Call Python service to generate first question
     const response = await axios.post('http://localhost:8000/start-interview', {
       position,
       difficulty,
+      skills,
+      total_questions: totalQuestions,
       resume_data: resumeAnalysis
     });
+
+    // Store interview session in database
+    const interview = await Interview.create({
+      userId: req.session.userId,
+      pythonSessionId: response.data.session_id,
+      position,
+      difficulty,
+      skills,
+      resumeAnalysis:JSON.stringify(resumeAnalysis),
+      isComplete: false,
+      finalScore: 0,
+      totalQuestions: Number(totalQuestions) || 5,
+      currentQuestion: 1
+    });
+
+    console.log('Python service response:', response.data);
+    console.log('Created interview session:', interview._id);
 
     res.json({
       success: true,
       sessionId: response.data.session_id,
       firstQuestion: response.data.question,
       questionNumber: 1,
-      totalQuestions: 5
+      totalQuestions: Number(totalQuestions) || 5
     });
 
   } catch (error) {
     console.error('Start interview error:', error);
-    res.status(500).json({ error: 'Failed to start interview' });
+    if (error.code === 'ECONNREFUSED') {
+      res.status(500).json({ error: 'Python service is not running. Please start the Django server.' });
+    } else {
+      res.status(500).json({ error: 'Failed to start interview' });
+    }
   }
 });
 
@@ -362,7 +414,10 @@ app.post('/api/submit-answer', async (req, res) => {
       nextQuestion: response.data.next_question,
       questionNumber: response.data.question_number,
       isComplete: response.data.is_complete,
-      finalScore: response.data.final_score || null
+      finalScore: response.data.final_score || null,
+      totalQuestions: response.data.total_questions || null,
+      suggestions: response.data.suggestions || [],
+      overallAdvice: response.data.overall_advice || ''
     });
 
   } catch (error) {

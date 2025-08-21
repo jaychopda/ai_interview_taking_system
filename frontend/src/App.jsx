@@ -3,20 +3,24 @@ import './App.css'
 
 import React, { useRef } from 'react';
 import { Upload, Mic, MicOff, Play, Pause, FileText, Briefcase, Clock, CheckCircle } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import Header from './components/Header';
 import Footer from './components/Footer';
 
 const API_BASE = 'http://localhost:5000';
 
 const AIInterviewSystem = () => {
-  const [currentStep, setCurrentStep] = useState('upload');
+  const [currentStep, setCurrentStep] = useState('selection');
   const [resumeUploaded, setResumeUploaded] = useState(false);
   const [selectedPosition, setSelectedPosition] = useState('');
   const [selectedDifficulty, setSelectedDifficulty] = useState('');
+  const [selectedTotalQuestions, setSelectedTotalQuestions] = useState(5);
+  const [selectedSkills, setSelectedSkills] = useState([]);
   const [isRecording, setIsRecording] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentQuestion, setCurrentQuestion] = useState('');
   const [questionNumber, setQuestionNumber] = useState(1);
+  const [totalQuestions, setTotalQuestions] = useState(5);
   const [userAnswer, setUserAnswer] = useState('');
   const [feedback, setFeedback] = useState('');
   const [interviewStarted, setInterviewStarted] = useState(false);
@@ -77,6 +81,26 @@ const AIInterviewSystem = () => {
     }
   };
 
+  const fetchInterviewHistory = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/user/interviews`, { credentials: 'include' });
+      const data = await res.json();
+      if (data.success) {
+        setInterviewHistory(data.interviews);
+      }
+    } catch (_) { /* noop */ }
+  };
+
+  const fetchLatestResumeAnalysis = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/user/resume-analysis`, { credentials: 'include' });
+      const data = await res.json();
+      if (data.success && data.analysis) {
+        setResumeAnalysis(data.analysis);
+      }
+    } catch (_) { /* noop */ }
+  };
+
   const fetchMe = async () => {
     try {
       const res = await fetch(`${API_BASE}/api/auth/me`, { credentials: 'include' });
@@ -84,19 +108,12 @@ const AIInterviewSystem = () => {
       if (data.authenticated) {
         setAuthUser(data.user);
         fetchInterviewHistory();
+        fetchLatestResumeAnalysis();
       } else {
         setAuthUser(null);
         setInterviewHistory([]);
-      }
-    } catch (_) { /* noop */ }
-  };
-
-  const fetchInterviewHistory = async () => {
-    try {
-      const res = await fetch(`${API_BASE}/api/user/interviews`, { credentials: 'include' });
-      const data = await res.json();
-      if (data.success) {
-        setInterviewHistory(data.interviews);
+        setResumeAnalysis(null);
+        setSelectedSkills([]);
       }
     } catch (_) { /* noop */ }
   };
@@ -126,6 +143,7 @@ const AIInterviewSystem = () => {
       setAuthUser(data.user);
       setShowAuth(false);
       fetchInterviewHistory();
+      fetchLatestResumeAnalysis(); // Call this after successful auth
     } catch (e) {
       setAuthError('Network error');
     }
@@ -136,7 +154,7 @@ const AIInterviewSystem = () => {
       await fetch(`${API_BASE}/api/auth/logout`, { method: 'POST', credentials: 'include' });
       setAuthUser(null);
       setInterviewHistory([]);
-      setCurrentStep('upload');
+      setCurrentStep('selection');
     } catch (_) { /* noop */ }
   };
 
@@ -193,6 +211,8 @@ const AIInterviewSystem = () => {
           body: JSON.stringify({
             position: selectedPosition,
             difficulty: selectedDifficulty,
+            skills: selectedSkills,
+            totalQuestions: selectedTotalQuestions,
             resumeAnalysis: resumeAnalysis
           })
         });
@@ -201,6 +221,7 @@ const AIInterviewSystem = () => {
           setSessionId(result.sessionId);
           setCurrentQuestion(result.firstQuestion);
           setQuestionNumber(1);
+          setTotalQuestions(result.totalQuestions || selectedTotalQuestions);
           setCurrentStep('interview');
           setInterviewStarted(true);
         } else {
@@ -299,7 +320,9 @@ const AIInterviewSystem = () => {
         if (result.isComplete) {
           setFinalResults({
             finalScore: result.finalScore,
-            totalQuestions: questionNumber
+            totalQuestions: result.totalQuestions || totalQuestions,
+            suggestions: result.suggestions || [],
+            overallAdvice: result.overallAdvice || ''
           });
           setCurrentStep('results');
           fetchInterviewHistory(); // Refresh history after completion
@@ -389,83 +412,33 @@ const AIInterviewSystem = () => {
 
       <main className="flex-grow">
         <div className="mx-auto max-w-5xl px-4 py-8">
-          {/* Auth bar - REMOVED */}
+          {/* Hero */}
+          <div className="mb-8 rounded-2xl bg-gradient-to-r from-indigo-600 to-sky-600 p-6 text-white shadow">
+            <h2 className="text-2xl font-bold">Start Your AI-Powered Interview</h2>
+            <p className="mt-1 text-sm opacity-90">Choose a position and difficulty to begin. You can analyze your resume from the header anytime.</p>
+          </div>
 
-          {/* Header - REMOVED */}
-          
           {/* Progress Bar */}
           <div className="mb-8">
             <div className="mb-2 flex items-center justify-between">
-              <span className={`text-xs md:text-sm ${currentStep === 'upload' ? 'text-indigo-700 font-semibold' : 'text-gray-500'}`}>Resume Upload</span>
-              <span className={`text-xs md:text-sm ${currentStep === 'selection' ? 'text-indigo-700 font-semibold' : 'text-gray-500'}`}>Position Selection</span>
-              <span className={`text-xs md:text-sm ${currentStep === 'interview' ? 'text-indigo-700 font-semibold' : 'text-gray-500'}`}>Interview</span>
-              <span className={`text-xs md:text-sm ${currentStep === 'results' ? 'text-indigo-700 font-semibold' : 'text-gray-500'}`}>Results</span>
+              <span className={`text-xs md:text-sm ${currentStep === 'selection' ? 'text-indigo-500 font-semibold' : 'text-gray-500'}`}>Position Selection</span>
+              <span className={`text-xs md:text-sm ${currentStep === 'interview' ? 'text-indigo-500 font-semibold' : 'text-gray-500'}`}>Interview</span>
+              <span className={`text-xs md:text-sm ${currentStep === 'results' ? 'text-indigo-500 font-semibold' : 'text-gray-500'}`}>Results</span>
             </div>
             <div className="relative h-2 w-full rounded-full bg-gray-200">
               <div
                 className="absolute left-0 top-0 h-2 rounded-full bg-gradient-to-r from-indigo-600 to-sky-500 transition-all duration-500"
                 style={{
                   width:
-                    currentStep === 'upload'
-                      ? '25%'
-                      : currentStep === 'selection'
-                      ? '50%'
+                    currentStep === 'selection'
+                      ? '33%'
                       : currentStep === 'interview'
-                      ? '75%'
+                      ? '66%'
                       : '100%'
                 }}
               />
             </div>
           </div>
-
-          {/* Step 1: Resume Upload */}
-          {currentStep === 'upload' && (
-            <div className="rounded-2xl border border-white/60 bg-white/70 p-8 shadow-xl backdrop-blur-xl">
-              <div className="text-center">
-                <FileText className="mx-auto mb-4 h-16 w-16 text-indigo-600" />
-                <h2 className="mb-4 text-2xl font-bold text-gray-800">Upload Your Resume</h2>
-                <p className="mb-6 text-gray-600">Our AI will analyze your resume to customize the interview questions</p>
-                
-                {!authUser ? (
-                  <div className="mb-6 rounded-lg bg-yellow-50 p-4">
-                    <p className="text-yellow-800">Please login or register to start an interview</p>
-                    <button onClick={() => { setAuthMode('login'); setShowAuth(true); }} className="mt-2 rounded-md bg-yellow-600 px-4 py-2 text-white hover:bg-yellow-700">Login / Register</button>
-                  </div>
-                ) : (
-                  <div 
-                    className="group cursor-pointer rounded-xl border-2 border-dashed border-indigo-300/70 p-8 transition-all hover:border-indigo-500 hover:bg-indigo-50/40"
-                    onClick={() => fileInputRef.current?.click()}
-                  >
-                    <Upload className="mx-auto mb-4 h-12 w-12 text-indigo-500 transition-transform group-hover:scale-110" />
-                    <p className="text-gray-700">Click to upload or drag and drop your resume</p>
-                    <p className="mt-2 text-sm text-gray-500">PDF, DOC, DOCX up to 10MB</p>
-                  </div>
-                )}
-                
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".pdf,.doc,.docx"
-                  onChange={handleFileUpload}
-                  className="hidden"
-                />
-                
-                {resumeUploaded && !loading && (
-                  <div className="mt-4 rounded-lg bg-green-50 p-4">
-                    <CheckCircle className="mr-2 inline h-5 w-5 text-green-500" />
-                    <span className="text-green-700">Resume uploaded and analyzed successfully!</span>
-                  </div>
-                )}
-                
-                {loading && (
-                  <div className="mt-4 rounded-lg bg-indigo-50 p-4">
-                    <div className="mr-2 inline-block h-5 w-5 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent"></div>
-                    <span className="text-indigo-700">Analyzing your resume with AI...</span>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
 
           {/* Step 2: Position & Difficulty Selection */}
           {currentStep === 'selection' && (
@@ -521,6 +494,71 @@ const AIInterviewSystem = () => {
                 </div>
               </div>
 
+              {/* Total Questions Selection */}
+              <div className="mt-8">
+                <h3 className="mb-4 flex items-center text-lg font-semibold text-gray-700">
+                  <Clock className="mr-2 h-5 w-5" />
+                  Select Number of Questions
+                </h3>
+                <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
+                  {[3,5,7,10,12,15].map(q => (
+                    <label key={q} className={`block cursor-pointer rounded-lg border p-3 text-center ${selectedTotalQuestions === q ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-gray-200 bg-white/70 text-gray-700'} hover:border-indigo-300`}>
+                      <input
+                        type="radio"
+                        name="totalQuestions"
+                        value={q}
+                        checked={selectedTotalQuestions === q}
+                        onChange={() => setSelectedTotalQuestions(q)}
+                        className="hidden"
+                      />
+                      {q}
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Skill Selection */}
+              {resumeAnalysis && Array.isArray(resumeAnalysis.skills) && resumeAnalysis.skills.length > 0 ? (
+                <div className="mt-8">
+                  <h3 className="mb-4 flex items-center text-lg font-semibold text-gray-700">
+                    <FileText className="mr-2 h-5 w-5" />
+                    Select Skills to Focus On
+                  </h3>
+                  <p className="text-sm text-gray-600 mb-4">Choose the technical skills from your resume that you want to be interviewed on:</p>
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                    {resumeAnalysis.skills.map((skill, index) => (
+                      <label key={index} className="flex items-center cursor-pointer rounded-lg border border-gray-200 bg-white/70 p-3 transition-colors hover:border-indigo-300">
+                        <input
+                          type="checkbox"
+                          value={skill}
+                          checked={selectedSkills.includes(skill)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedSkills([...selectedSkills, skill]);
+                            } else {
+                              setSelectedSkills(selectedSkills.filter(s => s !== skill));
+                            }
+                          }}
+                          className="mr-2 accent-indigo-600"
+                        />
+                        <span className="text-sm text-gray-700">{skill}</span>
+                      </label>
+                    ))}
+                  </div>
+                  {selectedSkills.length > 0 && (
+                    <div className="mt-4 p-3 bg-indigo-50 rounded-lg">
+                      <p className="text-sm text-indigo-700">
+                        <strong>Selected Skills:</strong> {selectedSkills.join(', ')}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="mt-8 rounded-lg border border-yellow-200 bg-yellow-50 p-4 text-yellow-800">
+                  <p className="text-sm">No skills found from your resume yet. Please <Link className="font-medium underline" to="/resume-analysis">upload a resume</Link> first so we can extract your technical skills for selection.</p>
+                </div>
+              )}
+
               <div className="text-center mt-8">
                 {loading ? (
                   <div className="inline-flex items-center">
@@ -530,7 +568,7 @@ const AIInterviewSystem = () => {
                 ) : (
                   <button
                     onClick={startInterview}
-                    disabled={!selectedPosition || !selectedDifficulty}
+                    disabled={!selectedPosition || !selectedDifficulty || selectedSkills.length === 0 || !selectedTotalQuestions}
                     className="rounded-lg bg-gradient-to-r from-indigo-600 to-sky-600 px-8 py-3 text-white shadow-md transition-all hover:from-indigo-700 hover:to-sky-700 disabled:cursor-not-allowed disabled:from-gray-300 disabled:to-gray-300"
                   >
                     Start Interview
@@ -544,8 +582,13 @@ const AIInterviewSystem = () => {
           {currentStep === 'interview' && (
             <div className="rounded-2xl border border-white/60 bg-white/70 p-8 shadow-xl backdrop-blur-xl">
               <div className="text-center mb-6">
-                <h2 className="text-2xl font-bold text-gray-800">Question {questionNumber} of 5</h2>
+                <h2 className="text-2xl font-bold text-gray-800">Question {questionNumber} of {totalQuestions}</h2>
                 <p className="text-gray-600">{selectedPosition} - {selectedDifficulty} Level</p>
+                {selectedSkills.length > 0 && (
+                  <p className="text-sm text-indigo-600 mt-2">
+                    <strong>Focusing on:</strong> {selectedSkills.join(', ')}
+                  </p>
+                )}
               </div>
 
               {/* Question Display */}
@@ -633,7 +676,7 @@ const AIInterviewSystem = () => {
                     <p className="text-sm text-gray-600">Questions Answered</p>
                   </div>
                   <div>
-                    <p className="text-2xl font-bold text-emerald-600">{finalResults?.finalScore || 85}%</p>
+                    <p className="text-2xl font-bold text-emerald-600">{finalResults?.finalScore ?? 0}/10</p>
                     <p className="text-sm text-gray-600">Overall Score</p>
                   </div>
                   <div>
@@ -653,10 +696,24 @@ const AIInterviewSystem = () => {
                 )}
               </div>
 
+              {finalResults?.suggestions && finalResults.suggestions.length > 0 && (
+                <div className="mb-6 rounded-xl bg-indigo-50 p-6 text-left">
+                  <h3 className="mb-3 text-lg font-semibold text-indigo-800">AI Suggestions for Improvement</h3>
+                  <ul className="list-disc pl-6 text-sm text-indigo-900 space-y-1">
+                    {finalResults.suggestions.map((s, idx) => (
+                      <li key={idx}>{s}</li>
+                    ))}
+                  </ul>
+                  {finalResults.overallAdvice && (
+                    <p className="mt-3 text-sm text-indigo-900"><strong>Overall advice:</strong> {finalResults.overallAdvice}</p>
+                  )}
+                </div>
+              )}
+
               <div className="flex justify-center gap-3">
                 <button
                   onClick={() => {
-                    setCurrentStep('upload');
+                    setCurrentStep('selection');
                     setResumeUploaded(false);
                     setSelectedPosition('');
                     setSelectedDifficulty('');
