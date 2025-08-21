@@ -9,7 +9,8 @@ import json
 class ResumeAnalyzer:
     def __init__(self):
         # Configure Gemini
-        api_key = os.getenv("GEMINI_API_KEY", "AIzaSyBsroOlIDtMUcn0Z7n-BjKQGR6KhdgI44E")
+        # api_key = os.getenv("GEMINI_API_KEY", "AIzaSyBsroOlIDtMUcn0Z7n-BjKQGR6KhdgI44E")
+        api_key = os.getenv("GEMINI_API_KEY", "AIzaSyAPCxYBsWvU1wvywinEmRHa6Vx1EF8Z3rE")
         try:
             genai.configure(api_key=api_key)
         except Exception as e:

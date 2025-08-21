@@ -207,12 +207,25 @@ app.get('/api/auth/me', async (req, res) => {
 
 app.get('/api/user/interviews', async (req, res) => {
   try {
-    const user = await User.findById(req.session.userId).select('_id email name');
-    if (!user) return res.json({ authenticated: false });
-    const interviews = await Interview.find({ userId: user._id });
-    return res.json({ authenticated: true, interviews: interviews });
+    if (!req.session.userId) {
+      return res.status(401).json({ success: false, error: 'Not authenticated' });
+    }
+    const user = await User.findById(req.session.userId).select('_id');
+    if (!user) return res.status(401).json({ success: false, error: 'Not authenticated' });
+
+    const docs = await Interview.find({ userId: user._id }).sort({ createdAt: -1 });
+    const interviews = docs.map((i) => ({
+      sessionId: i.pythonSessionId,
+      position: i.position,
+      difficulty: i.difficulty,
+      finalScore: typeof i.finalScore === 'number' ? i.finalScore : null,
+      totalQuestions: i.totalQuestions || 5,
+      skills: Array.isArray(i.skills) ? i.skills : [],
+      createdAt: i.createdAt
+    }));
+    return res.json({ success: true, interviews });
   } catch (err) {
-    return res.status(500).json({ error: 'Failed to fetch interview history' });
+    return res.status(500).json({ success: false, error: 'Failed to fetch interview history' });
   }
 });
 
@@ -326,6 +339,8 @@ app.post('/api/start-interview', async (req, res) => {
   }
 });
 
+
+
 // Route 3: Text-to-Speech (Sarvam AI)
 app.post('/api/text-to-speech', async (req, res) => {
   try {
@@ -408,6 +423,25 @@ app.post('/api/submit-answer', async (req, res) => {
       question_number: questionNumber
     });
 
+    // Update interview progress in DB
+    try {
+      const interview = await Interview.findOne({ pythonSessionId: sessionId, userId: req.session.userId });
+      if (interview) {
+        const update = {
+          currentQuestion: response.data.question_number || interview.currentQuestion,
+        };
+        if (response.data.is_complete) {
+          update.isComplete = true;
+          if (typeof response.data.final_score !== 'undefined' && response.data.final_score !== null) {
+            update.finalScore = Number(response.data.final_score);
+          }
+        }
+        await Interview.updateOne({ _id: interview._id }, { $set: update });
+      }
+    } catch (e) {
+      console.error('Failed to update interview document:', e);
+    }
+
     res.json({
       success: true,
       feedback: response.data.feedback,
@@ -423,6 +457,71 @@ app.post('/api/submit-answer', async (req, res) => {
   } catch (error) {
     console.error('Submit answer error:', error);
     res.status(500).json({ error: 'Failed to process answer' });
+  }
+});
+
+// Route 7: Cancel interview (delete if not completed)
+app.post('/api/cancel-interview', async (req, res) => {
+  try {
+    if (!req.session.userId) {
+      return res.status(401).json({ error: 'User not authenticated' });
+    }
+    const { sessionId } = req.body || {};
+    if (!sessionId) {
+      return res.status(400).json({ error: 'Session ID is required.' });
+    }
+    const doc = await Interview.findOne({ pythonSessionId: sessionId, userId: req.session.userId });
+    if (!doc) {
+      return res.json({ success: true, deleted: false });
+    }
+    if (doc.isComplete) {
+      return res.json({ success: true, deleted: false });
+    }
+    await Interview.deleteOne({ _id: doc._id });
+    return res.json({ success: true, deleted: true });
+  } catch (err) {
+    console.error('Cancel interview error:', err);
+    return res.status(500).json({ error: 'Failed to cancel interview' });
+  }
+});
+
+// Route 8: Get combined interview details (Mongo + Django) by sessionId
+app.get('/api/user/interview/:sessionId', async (req, res) => {
+  try {
+    if (!req.session.userId) {
+      return res.status(401).json({ success: false, error: 'Not authenticated' });
+    }
+    const { sessionId } = req.params;
+    const interview = await Interview.findOne({ userId: req.session.userId, pythonSessionId: sessionId });
+    if (!interview) {
+      return res.status(404).json({ success: false, error: 'Interview not found' });
+    }
+
+    let djangoResults = null;
+    try {
+      const resp = await axios.get(`http://localhost:8000/interview-results/${sessionId}`);
+      djangoResults = resp.data;
+    } catch (e) {
+      djangoResults = null;
+    }
+
+    const payload = {
+      success: true,
+      interview: {
+        sessionId: interview.pythonSessionId,
+        position: interview.position,
+        difficulty: interview.difficulty,
+        finalScore: interview.finalScore,
+        totalQuestions: interview.totalQuestions || (djangoResults && djangoResults.questions_and_answers ? djangoResults.questions_and_answers.length : 5),
+        skills: Array.isArray(interview.skills) ? interview.skills : [],
+        createdAt: interview.createdAt
+      },
+      results: djangoResults || null
+    };
+    return res.json(payload);
+  } catch (err) {
+    console.error('Fetch interview details error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to fetch interview details' });
   }
 });
 

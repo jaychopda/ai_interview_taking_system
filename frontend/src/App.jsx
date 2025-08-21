@@ -122,6 +122,32 @@ const AIInterviewSystem = () => {
     fetchMe();
   }, []);
 
+  React.useEffect(() => {
+    const cancelIfInProgress = () => {
+      if (sessionId && currentStep !== 'results') {
+        try {
+          const payload = JSON.stringify({ sessionId });
+          const blob = new Blob([payload], { type: 'application/json' });
+          navigator.sendBeacon('http://localhost:5000/api/cancel-interview', blob);
+        } catch (_) { /* noop */ }
+      }
+    };
+
+    const onBeforeUnload = () => {
+      cancelIfInProgress();
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') cancelIfInProgress();
+    };
+
+    window.addEventListener('beforeunload', onBeforeUnload);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      window.removeEventListener('beforeunload', onBeforeUnload);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [sessionId, currentStep]);
+
   const doAuth = async () => {
     setAuthError('');
     try {
@@ -784,14 +810,17 @@ const AIInterviewSystem = () => {
                       <div key={interview.sessionId} className="flex items-center justify-between rounded-lg border border-gray-200 p-4 hover:bg-gray-50">
                         <div>
                           <h4 className="font-semibold text-gray-800">{interview.position} - {interview.difficulty}</h4>
-                          <p className="text-sm text-gray-600">Score: {interview.finalScore}/10 | {new Date(interview.createdAt).toLocaleDateString()}</p>
+                          <p className="text-sm text-gray-600">
+                            Score: {interview.finalScore ?? '—'}/10 | Questions: {interview.totalQuestions} | Skills: {(interview.skills || []).slice(0,3).join(', ') || '—'}
+                          </p>
+                          <p className="text-xs text-gray-500">{new Date(interview.createdAt).toLocaleString()}</p>
                         </div>
-                        <button
-                          onClick={() => viewInterviewDetail(interview.sessionId)}
+                        <a
+                          href={`/interview/${interview.sessionId}`}
                           className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm text-white hover:bg-indigo-700"
                         >
                           View Details
-                        </button>
+                        </a>
                       </div>
                     ))}
                   </div>

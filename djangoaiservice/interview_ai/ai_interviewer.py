@@ -7,7 +7,8 @@ import re
 class AIInterviewer:
     def __init__(self):
         # Configure with environment variable
-        api_key = 'AIzaSyBsroOlIDtMUcn0Z7n-BjKQGR6KhdgI44E'
+        # api_key = 'AIzaSyBsroOlIDtMUcn0Z7n-BjKQGR6KhdgI44E'
+        api_key = 'AIzaSyAPCxYBsWvU1wvywinEmRHa6Vx1EF8Z3rE'
         if api_key:
             try:
                 genai.configure(api_key=api_key)
