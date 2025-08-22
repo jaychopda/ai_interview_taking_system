@@ -19,6 +19,10 @@ const AIInterviewSystem = () => {
   const [isRecording, setIsRecording] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentQuestion, setCurrentQuestion] = useState('');
+  const [ttsError, setTtsError] = useState('');
+  const [ttsLoading, setTtsLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [passwordErrors, setPasswordErrors] = useState([]);
   const [questionNumber, setQuestionNumber] = useState(1);
   const [totalQuestions, setTotalQuestions] = useState(5);
   const [userAnswer, setUserAnswer] = useState('');
@@ -148,8 +152,34 @@ const AIInterviewSystem = () => {
     };
   }, [sessionId, currentStep]);
 
+  React.useEffect(() => {
+    return () => {
+      if ('speechSynthesis' in window) {
+        speechSynthesis.cancel();
+      }
+    };
+  }, []);
+
+  React.useEffect(() => {
+    if ('speechSynthesis' in window) {
+      speechSynthesis.cancel();
+    }
+    setIsPlaying(false);
+    setTtsError('');
+    setTtsLoading(false);
+  }, [currentQuestion]);
+
   const doAuth = async () => {
     setAuthError('');
+    
+    // Validate password for registration
+    if (authMode === 'register') {
+      if (!validatePassword(authPassword)) {
+        setAuthError('Please fix password validation errors');
+        return;
+      }
+    }
+
     try {
       const url = authMode === 'login' ? `${API_BASE}/api/auth/login` : `${API_BASE}/api/auth/register`;
       const body = authMode === 'login'
@@ -368,39 +398,190 @@ const AIInterviewSystem = () => {
     }
   };
 
-  const togglePlayback = async () => {
-    if (!isPlaying) {
-      setIsPlaying(true);
-      
-      try {
-        const response = await fetch('http://localhost:5000/api/text-to-speech', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            text: currentQuestion
-          }),
-        });
+    const startPlayback = async () => {
+    setTtsError('');
+    setTtsLoading(true);
+    // Don't set isPlaying to true yet - wait for actual audio to start
+    
+    try {
+      const response = await fetch('http://localhost:5000/api/text-to-speech', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          text: currentQuestion
+        }),
+      });
 
-        const result = await response.json();
-        
-        if (result.success) {
-          // Play the audio
+      const result = await response.json();
+      
+      if (result.success) {
+        if (result.provider === 'sarvam' && result.audioUrl) {
+          // Use Sarvam AI audio
+          console.log('Using Sarvam AI TTS service');
           const audio = new Audio(result.audioUrl);
-          audio.onended = () => setIsPlaying(false);
-          audio.onerror = () => setIsPlaying(false);
+          audio.onended = () => {
+            setIsPlaying(false);
+            setTtsLoading(false);
+          };
+          audio.onerror = () => {
+            console.error('Audio playback error, falling back to browser TTS');
+            setIsPlaying(false);
+            setTtsLoading(false);
+            useBrowserTTS(currentQuestion);
+          };
+          audio.onplay = () => {
+            setIsPlaying(true);
+            setTtsLoading(false);
+          };
           audio.play();
+        } else if (result.provider === 'browser') {
+          // Use browser speech synthesis as fallback
+          console.log('Using browser TTS as fallback');
+          useBrowserTTS(currentQuestion);
         } else {
-          console.error('TTS failed:', result.error);
+          console.error('TTS failed: Unknown provider');
           setIsPlaying(false);
+          setTtsLoading(false);
         }
-      } catch (error) {
-        console.error('Error with text-to-speech:', error);
+      } else {
+        console.error('TTS failed:', result.error);
+        setTtsError(result.error || 'TTS service failed');
         setIsPlaying(false);
+        // Fallback to browser TTS
+        useBrowserTTS(currentQuestion);
       }
-    } else {
+    } catch (error) {
+      console.error('Error with text-to-speech:', error);
+      setTtsError('Network error, using browser TTS as fallback');
       setIsPlaying(false);
+      // Fallback to browser TTS
+      useBrowserTTS(currentQuestion);
+    }
+  };
+
+  const useBrowserTTS = (text) => {
+    if ('speechSynthesis' in window) {
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 0.9;
+      utterance.pitch = 1.0;
+      utterance.volume = 1.0;
+      
+      utterance.onstart = () => {
+        setIsPlaying(true);
+        setTtsLoading(false);
+      };
+      
+      utterance.onend = () => {
+        setIsPlaying(false);
+        setTtsLoading(false);
+      };
+      
+      utterance.onerror = () => {
+        console.error('Browser TTS error');
+        setIsPlaying(false);
+        setTtsLoading(false);
+      };
+      
+      speechSynthesis.speak(utterance);
+    } else {
+      console.error('Speech synthesis not supported in this browser');
+      setIsPlaying(false);
+      setTtsLoading(false);
+    }
+  };
+
+  const stopSpeech = () => {
+    // Stop browser speech synthesis
+    if ('speechSynthesis' in window) {
+      speechSynthesis.cancel();
+    }
+    
+    // Stop any playing audio elements
+    const audioElements = document.querySelectorAll('audio');
+    audioElements.forEach(audio => {
+      if (!audio.paused) {
+        audio.pause();
+        audio.currentTime = 0;
+      }
+    });
+    
+    setIsPlaying(false);
+    setTtsError('');
+    setTtsLoading(false);
+  };
+
+  const validatePassword = (password) => {
+    const errors = [];
+    
+    if (password.length < 6) {
+      errors.push("Password must be at least 6 characters long");
+    }
+    
+    if (!/[A-Z]/.test(password)) {
+      errors.push("Password must contain at least one uppercase letter");
+    }
+    
+    if (!/\d/.test(password)) {
+      errors.push("Password must contain at least one digit");
+    }
+    
+    setPasswordErrors(errors);
+    return errors.length === 0;
+  };
+
+  const handlePasswordChange = (e) => {
+    const newPassword = e.target.value;
+    setAuthPassword(newPassword);
+    
+    if (newPassword.length > 0) {
+      validatePassword(newPassword);
+    } else {
+      setPasswordErrors([]);
+    }
+  };
+
+  const getPasswordStrength = (password) => {
+    if (password.length === 0) return { score: 0, label: '', color: '' };
+    
+    let score = 0;
+    if (password.length >= 6) score += 1;
+    if (/[A-Z]/.test(password)) score += 1;
+    if (/\d/.test(password)) score += 1;
+    
+    if (score === 0) return { score: 0, label: 'Very Weak', color: 'bg-red-500' };
+    if (score === 1) return { score: 1, label: 'Weak', color: 'bg-orange-500' };
+    if (score === 2) return { score: 2, label: 'Fair', color: 'bg-yellow-500' };
+    if (score === 3) return { score: 3, label: 'Strong', color: 'bg-green-500' };
+  };
+
+  const testTTSService = async () => {
+    try {
+      const response = await fetch('http://localhost:5000/api/text-to-speech', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          text: 'This is a test of the text to speech service.'
+        }),
+      });
+
+      const result = await response.json();
+      console.log('TTS Test Result:', result);
+      
+      if (result.success) {
+        if (result.provider === 'sarvam') {
+          console.log('✅ Sarvam AI TTS service is working');
+        } else {
+          console.log('⚠️ Using browser TTS fallback');
+        }
+      } else {
+        console.error('❌ TTS service test failed:', result.error);
+      }
+    } catch (error) {
+      console.error('❌ TTS service test error:', error);
     }
   };
 
@@ -443,6 +624,8 @@ const AIInterviewSystem = () => {
             <h2 className="text-2xl font-bold">Start Your AI-Powered Interview</h2>
             <p className="mt-1 text-sm opacity-90">Choose a position and difficulty to begin. You can analyze your resume from the header anytime.</p>
           </div>
+
+
 
           {/* Progress Bar */}
           <div className="mb-8">
@@ -621,15 +804,56 @@ const AIInterviewSystem = () => {
               <div className="mb-6 rounded-xl bg-indigo-50 p-6">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="text-lg font-semibold text-gray-800">Current Question:</h3>
-                  <button
-                    onClick={togglePlayback}
-                    className="flex items-center space-x-2 rounded-lg bg-gradient-to-r from-indigo-600 to-sky-600 px-4 py-2 text-white shadow-md transition-colors hover:from-indigo-700 hover:to-sky-700"
-                  >
-                    {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-                    <span>{isPlaying ? 'Stop' : 'Listen'}</span>
-                  </button>
+                  <div className="flex items-center space-x-2">  
+                    {ttsLoading ? (
+                      <button
+                        disabled
+                        className="flex items-center space-x-2 rounded-lg bg-gray-400 px-4 py-2 text-white cursor-not-allowed"
+                      >
+                        <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
+                        <span>Loading...</span>
+                      </button>
+                    ) : !isPlaying ? (
+                      <button
+                        onClick={startPlayback}
+                        className="flex items-center space-x-2 rounded-lg bg-gradient-to-r from-indigo-600 to-sky-600 px-4 py-2 text-white shadow-md transition-colors hover:from-indigo-700 hover:to-sky-700"
+                      >
+                        <Play className="h-4 w-4" />
+                        <span>Listen</span>
+                      </button>
+                    ) : (
+                      <button
+                        onClick={stopSpeech}
+                        className="flex items-center space-x-2 rounded-lg bg-red-500 px-4 py-2 text-white shadow-md transition-colors hover:bg-red-600"
+                      >
+                        <Pause className="h-4 w-4" />
+                        <span>Stop</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <p className="text-gray-700 text-lg">{currentQuestion}</p>
+                
+                {/* TTS Status and Error Display */}
+                {ttsError && (
+                  <div className="mt-3 rounded-lg bg-amber-50 border border-amber-200 p-3">
+                    <div className="flex items-center space-x-2">
+                      <div className="h-2 w-2 rounded-full bg-amber-500"></div>
+                      <span className="text-sm text-amber-700">
+                        {ttsError.includes('browser') ? 'Using browser speech synthesis' : ttsError}
+                      </span>
+                    </div>
+                  </div>
+                )}
+                
+                {isPlaying && !ttsError && (
+                  <div className="mt-3 rounded-lg bg-blue-50 border border-blue-200 p-3">
+                    <div className="flex items-center space-x-2">
+                      <div className="h-2 w-2 rounded-full bg-blue-500 animate-pulse"></div>
+                      <span className="text-sm text-blue-700">Playing audio...</span>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Voice Recording */}
@@ -837,7 +1061,7 @@ const AIInterviewSystem = () => {
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
             <div className="mb-4 flex items-center justify-between">
               <h3 className="text-lg font-semibold text-gray-800">{authMode === 'login' ? 'Login' : 'Create Account'}</h3>
-              <button onClick={() => setShowAuth(false)} className="rounded-md px-2 py-1 text-sm text-gray-600 hover:bg-gray-100">Close</button>
+              <button onClick={() => { setShowAuth(false); setShowPassword(false); setPasswordErrors([]); }} className="rounded-md px-2 py-1 text-sm text-gray-600 hover:bg-gray-100">Close</button>
             </div>
             {authError && <div className="mb-3 rounded-md bg-red-50 p-2 text-sm text-red-700">{authError}</div>}
             {authMode === 'register' && (
@@ -852,11 +1076,67 @@ const AIInterviewSystem = () => {
             </div>
             <div className="mb-4">
               <label className="mb-1 block text-sm text-gray-700">Password</label>
-              <input type="password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-indigo-500" placeholder="••••••••" />
-            </div>
-            <div className="flex items-center justify-between">
+              <div className="relative">
+                <input 
+                  type={showPassword ? "text" : "password"} 
+                  value={authPassword} 
+                  onChange={handlePasswordChange} 
+                  className={`w-full rounded-md border px-3 py-2 pr-10 text-sm outline-none focus:border-indigo-500 ${
+                    passwordErrors.length > 0 ? 'border-red-500' : 'border-gray-300'
+                  }`}
+                  placeholder="••••••••" 
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700 focus:outline-none"
+                >
+                  {showPassword ? (
+                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878L21 21" />
+                    </svg>
+                  ) : (
+                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                    </svg>
+                  )}
+                </button>
+                                </div>
+                  
+                  {/* Password strength indicator */}
+                  {authMode === 'register' && authPassword.length > 0 && (
+                    <div className="mt-2">
+                      <div className="flex items-center justify-between text-xs text-gray-600 mb-1">
+                        <span>Password strength:</span>
+                        <span className="font-medium">{getPasswordStrength(authPassword).label}</span>
+                      </div>
+                      <div className="w-full bg-gray-200 rounded-full h-2">
+                        <div 
+                          className={`h-2 rounded-full transition-all duration-300 ${getPasswordStrength(authPassword).color}`}
+                          style={{ width: `${(getPasswordStrength(authPassword).score / 3) * 100}%` }}
+                        ></div>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Password validation errors */}
+                  {passwordErrors.length > 0 && authMode === 'register' && (
+                    <div className="mt-2 space-y-1">
+                      {passwordErrors.map((error, index) => (
+                        <div key={index} className="flex items-center text-xs text-red-600">
+                          <svg className="mr-1 h-3 w-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                          </svg>
+                          {error}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center justify-between">
               <button onClick={doAuth} className="rounded-md bg-indigo-600 px-4 py-2 text-white hover:bg-indigo-700">{authMode === 'login' ? 'Login' : 'Register'}</button>
-              <button onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')} className="text-sm text-indigo-600 hover:underline">
+              <button onClick={() => { setAuthMode(authMode === 'login' ? 'register' : 'login'); setShowPassword(false); setPasswordErrors([]); }} className="text-sm text-indigo-600 hover:underline">
                 {authMode === 'login' ? 'Create an account' : 'Have an account? Login'}
               </button>
             </div>

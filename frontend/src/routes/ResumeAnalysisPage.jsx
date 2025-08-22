@@ -12,6 +12,16 @@ export default function ResumeAnalysisPage() {
   const [uploading, setUploading] = useState(false);
   const [suggestions, setSuggestions] = useState([]);
   const fileInputRef = useRef(null);
+  
+  // Authentication states
+  const [showAuth, setShowAuth] = useState(false);
+  const [authMode, setAuthMode] = useState('login');
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authName, setAuthName] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [passwordErrors, setPasswordErrors] = useState([]);
 
   useEffect(() => {
     const fetchMe = async () => {
@@ -82,7 +92,100 @@ export default function ResumeAnalysisPage() {
     setSuggestions([...tips, ...roleTips]);
   };
 
+  const validatePassword = (password) => {
+    const errors = [];
+    
+    if (password.length < 6) {
+      errors.push("Password must be at least 6 characters long");
+    }
+    
+    if (!/[A-Z]/.test(password)) {
+      errors.push("Password must contain at least one uppercase letter");
+    }
+    
+    if (!/\d/.test(password)) {
+      errors.push("Password must contain at least one digit");
+    }
+    
+    setPasswordErrors(errors);
+    return errors.length === 0;
+  };
+
+  const handlePasswordChange = (e) => {
+    const newPassword = e.target.value;
+    setAuthPassword(newPassword);
+    
+    if (newPassword.length > 0) {
+      validatePassword(newPassword);
+    } else {
+      setPasswordErrors([]);
+    }
+  };
+
+  const doAuth = async () => {
+    setAuthError('');
+    
+    // Validate password for registration
+    if (authMode === 'register') {
+      if (!validatePassword(authPassword)) {
+        setAuthError('Please fix password validation errors');
+        return;
+      }
+    }
+    
+    try {
+      const url = authMode === 'login' ? `${API_BASE}/api/auth/login` : `${API_BASE}/api/auth/register`;
+      const body = authMode === 'login' ? { email: authEmail, password: authPassword } : { email: authEmail, password: authPassword, name: authName };
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(body)
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setAuthError(data.error || 'Authentication failed');
+        return;
+      }
+      setAuthUser(data.user);
+      setShowAuth(false);
+      // Refresh the page to get the user's data
+      window.location.reload();
+    } catch (e) {
+      setAuthError('Network error');
+    }
+  };
+
+  const doLogout = async () => {
+    try {
+      await fetch(`${API_BASE}/api/auth/logout`, { method: 'POST', credentials: 'include' });
+      setAuthUser(null);
+      setAnalysis(null);
+      setSuggestions([]);
+    } catch (_) {}
+  };
+
+  const getPasswordStrength = (password) => {
+    if (password.length === 0) return { score: 0, label: '', color: '' };
+    
+    let score = 0;
+    if (password.length >= 6) score += 1;
+    if (/[A-Z]/.test(password)) score += 1;
+    if (/\d/.test(password)) score += 1;
+    
+    if (score === 0) return { score: 0, label: 'Very Weak', color: 'bg-red-500' };
+    if (score === 1) return { score: 1, label: 'Weak', color: 'bg-orange-500' };
+    if (score === 2) return { score: 2, label: 'Fair', color: 'bg-yellow-500' };
+    if (score === 3) return { score: 3, label: 'Strong', color: 'bg-green-500' };
+  };
+
   const handleFileUpload = async (event) => {
+    if (!authUser) {
+      setShowAuth(true);
+      setAuthMode('login');
+      return;
+    }
+    
     const file = event.target.files[0];
     if (!file) return;
     setUploading(true);
@@ -110,7 +213,7 @@ export default function ResumeAnalysisPage() {
 
   return (
     <div className="flex min-h-screen flex-col bg-gradient-to-b from-indigo-50 via-white to-white">
-      <Header authUser={authUser} setShowHistory={() => {}} doLogout={() => {}} setAuthMode={() => {}} setShowAuth={() => {}} />
+      <Header authUser={authUser} setShowHistory={() => {}} doLogout={doLogout} setAuthMode={setAuthMode} setShowAuth={setShowAuth} />
       <main className="flex-grow">
         <div className="mx-auto max-w-5xl px-4 py-8">
           <div className="mb-8 flex items-center justify-between">
@@ -119,7 +222,7 @@ export default function ResumeAnalysisPage() {
               <p className="text-sm text-gray-600">Upload your resume to view AI-extracted insights and suggestions.</p>
             </div>
             <button onClick={() => fileInputRef.current?.click()} className="inline-flex items-center gap-2 rounded-md bg-indigo-600 px-4 py-2 text-white hover:bg-indigo-700">
-              <Upload className="h-4 w-4" /> {analysis ? 'Upload New Resume' : 'Upload Resume'}
+              <Upload className="h-4 w-4" /> {!authUser ? 'Login to Upload' : (analysis ? 'Upload New Resume' : 'Upload Resume')}
             </button>
             <input ref={fileInputRef} type="file" accept=".pdf,.doc,.docx" onChange={handleFileUpload} className="hidden" />
           </div>
@@ -241,6 +344,96 @@ export default function ResumeAnalysisPage() {
           )}
         </div>
       </main>
+
+      {/* Auth modal */}
+      {showAuth && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-gray-800">{authMode === 'login' ? 'Login' : 'Create Account'}</h3>
+              <button onClick={() => { setShowAuth(false); setShowPassword(false); setPasswordErrors([]); }} className="rounded-md px-2 py-1 text-sm text-gray-600 hover:bg-gray-100">Close</button>
+            </div>
+            {authError && <div className="mb-3 rounded-md bg-red-50 p-2 text-sm text-red-700">{authError}</div>}
+            {authMode === 'register' && (
+              <div className="mb-3">
+                <label className="mb-1 block text-sm text-gray-700">Name</label>
+                <input value={authName} onChange={(e) => setAuthName(e.target.value)} className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-indigo-500" placeholder="Your name" />
+              </div>
+            )}
+            <div className="mb-3">
+              <label className="mb-1 block text-sm text-gray-700">Email</label>
+              <input type="email" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-indigo-500" placeholder="you@example.com" />
+            </div>
+            <div className="mb-4">
+              <label className="mb-1 block text-sm text-gray-700">Password</label>
+              <div className="relative">
+                <input 
+                  type={showPassword ? "text" : "password"} 
+                  value={authPassword} 
+                  onChange={handlePasswordChange} 
+                  className={`w-full rounded-md border px-3 py-2 pr-10 text-sm outline-none focus:border-indigo-500 ${
+                    passwordErrors.length > 0 ? 'border-red-500' : 'border-gray-300'
+                  }`}
+                  placeholder="••••••••" 
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700 focus:outline-none"
+                >
+                  {showPassword ? (
+                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878L21 21" />
+                    </svg>
+                  ) : (
+                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                    </svg>
+                  )}
+                </button>
+              </div>
+              
+              {/* Password strength indicator */}
+              {authMode === 'register' && authPassword.length > 0 && (
+                <div className="mt-2">
+                  <div className="flex items-center justify-between text-xs text-gray-600 mb-1">
+                    <span>Password strength:</span>
+                    <span className="font-medium">{getPasswordStrength(authPassword).label}</span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-2">
+                    <div 
+                      className={`h-2 rounded-full transition-all duration-300 ${getPasswordStrength(authPassword).color}`}
+                      style={{ width: `${(getPasswordStrength(authPassword).score / 3) * 100}%` }}
+                    ></div>
+                  </div>
+                </div>
+              )}
+              
+              {/* Password validation errors */}
+              {passwordErrors.length > 0 && authMode === 'register' && (
+                <div className="mt-2 space-y-1">
+                  {passwordErrors.map((error, index) => (
+                    <div key={index} className="flex items-center text-xs text-red-600">
+                      <svg className="mr-1 h-3 w-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                      </svg>
+                      {error}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="flex items-center justify-between">
+              <button onClick={doAuth} className="rounded-md bg-indigo-600 px-4 py-2 text-white hover:bg-indigo-700">{authMode === 'login' ? 'Login' : 'Register'}</button>
+              <button onClick={() => { setAuthMode(authMode === 'login' ? 'register' : 'login'); setShowPassword(false); setPasswordErrors([]); }} className="text-sm text-indigo-600 hover:underline">
+                {authMode === 'login' ? 'Create an account' : 'Have an account? Login'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <Footer />
     </div>
   );

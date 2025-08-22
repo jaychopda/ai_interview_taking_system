@@ -341,36 +341,83 @@ app.post('/api/start-interview', async (req, res) => {
 
 
 
-// Route 3: Text-to-Speech (Sarvam AI)
+// Route 3: Text-to-Speech (Sarvam AI with fallback)
 app.post('/api/text-to-speech', async (req, res) => {
   try {
     const { text } = req.body;
+    
+    if (!text || text.trim().length === 0) {
+      return res.status(400).json({ error: 'Text is required for text-to-speech conversion' });
+    }
 
-    const response = await axios.post('https://api.sarvam.ai/text-to-speech', {
-      inputs: [text],
-      target_language_code: "en-IN",
-      speaker: "meera",
-      pitch: 0,
-      pace: 1.0,
-      loudness: 1.0,
-      speech_sample_rate: 8000,
-      enable_preprocessing: true,
-      model: "bulbul:v1"
-    }, {
-      headers: {
-        'api-subscription-key': "sk_7jrwqldo_dPDLtBSYQpJNMQjflcbaka9A",
-        'Content-Type': 'application/json'
+    // Try Sarvam AI first
+    try {
+      const response = await axios.post('https://api.sarvam.ai/text-to-speech', {
+        inputs: [text],
+        target_language_code: "en-IN",
+        speaker: "meera",
+        pitch: 0,
+        pace: 1.0,
+        loudness: 1.0,
+        speech_sample_rate: 8000,
+        enable_preprocessing: true,
+        model: "bulbul:v1"
+      }, {
+        headers: {
+          'api-subscription-key': "sk_7jrwqldo_dPDLtBSYQpJNMQjflcbaka9A",
+          'Content-Type': 'application/json'
+        },
+        timeout: 10000 // 10 second timeout
+      });
+
+      if (response.data && response.data.audios && response.data.audios[0]) {
+        return res.json({
+          success: true,
+          audioUrl: response.data.audios[0],
+          provider: 'sarvam'
+        });
       }
-    });
+    } catch (sarvamError) {
+      console.error('Sarvam AI TTS error:', sarvamError.message);
+      
+      // Provide specific error messages based on response status
+      if (sarvamError.response) {
+        const status = sarvamError.response.status;
+        const errorData = sarvamError.response.data;
+        
+        if (status === 401) {
+          console.error('Sarvam AI API key may be expired or invalid');
+        } else if (status === 429) {
+          console.error('Sarvam AI rate limit exceeded');
+        } else if (status === 500) {
+          console.error('Sarvam AI internal server error');
+        } else if (status >= 400) {
+          console.error(`Sarvam AI client error: ${status}`, errorData);
+        }
+      } else if (sarvamError.code === 'ECONNABORTED') {
+        console.error('Sarvam AI request timeout');
+      } else if (sarvamError.code === 'ENOTFOUND') {
+        console.error('Sarvam AI service not found');
+      }
+    }
 
+    // Fallback: Use browser's built-in speech synthesis
+    // This will be handled on the frontend
     res.json({
       success: true,
-      audioUrl: response.data.audios[0]
+      audioUrl: null,
+      provider: 'browser',
+      text: text,
+      message: 'Using browser speech synthesis as fallback'
     });
 
   } catch (error) {
     console.error('TTS error:', error);
-    res.status(500).json({ error: 'Failed to convert text to speech' });
+    res.status(500).json({ 
+      error: 'Failed to convert text to speech',
+      details: error.message,
+      fallback: 'Browser speech synthesis will be used'
+    });
   }
 });
 
